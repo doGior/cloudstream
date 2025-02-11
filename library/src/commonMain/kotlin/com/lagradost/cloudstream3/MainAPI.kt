@@ -1,3 +1,9 @@
+@file:Suppress(
+    "UNUSED",
+    "UnusedReceiverParameter",
+    "MemberVisibilityCanBePrivate"
+)
+
 package com.lagradost.cloudstream3
 
 import com.fasterxml.jackson.annotation.JsonProperty
@@ -23,6 +29,11 @@ import kotlin.io.encoding.Base64
 import kotlin.io.encoding.ExperimentalEncodingApi
 import kotlin.math.absoluteValue
 
+/** Api has not yet been published to stable, and will cause `NoSuchMethodException` on stable */
+@MustBeDocumented // Same as java.lang.annotation.Documented
+@Retention(AnnotationRetention.SOURCE) // This is only an IDE hint, and will not be used in the runtime
+annotation class Prerelease
+
 /**
  * Defines the constant for the all languages preference, if this is set then it is
  * the equivalent of all languages being set
@@ -43,8 +54,6 @@ object APIHolder {
         get() = System.currentTimeMillis() / 1000L
     val unixTimeMS: Long
         get() = System.currentTimeMillis()
-
-    private const val defProvider = 0
 
     // ConcurrentModificationException is possible!!!
     val allProviders = threadSafeListOf<MainAPI>()
@@ -377,37 +386,37 @@ fun mainPageOf(vararg elements: Pair<String, String>): List<MainPageData> {
     return elements.map { (url, name) -> MainPageData(name = name, data = url) }
 }
 
-@Suppress("DEPRECATION")
 fun newHomePageResponse(
     name: String,
     list: List<SearchResponse>,
     hasNext: Boolean? = null,
 ): HomePageResponse {
+    @Suppress("DEPRECATION")
     return HomePageResponse(
         listOf(HomePageList(name, list)),
         hasNext = hasNext ?: list.isNotEmpty()
     )
 }
 
-@Suppress("DEPRECATION")
 fun newHomePageResponse(
     data: MainPageRequest,
     list: List<SearchResponse>,
     hasNext: Boolean? = null,
 ): HomePageResponse {
+    @Suppress("DEPRECATION")
     return HomePageResponse(
         listOf(HomePageList(data.name, list, data.horizontalImages)),
         hasNext = hasNext ?: list.isNotEmpty()
     )
 }
 
-@Suppress("DEPRECATION")
 fun newHomePageResponse(list: HomePageList, hasNext: Boolean? = null): HomePageResponse {
+    @Suppress("DEPRECATION")
     return HomePageResponse(listOf(list), hasNext = hasNext ?: list.list.isNotEmpty())
 }
 
-@Suppress("DEPRECATION")
 fun newHomePageResponse(list: List<HomePageList>, hasNext: Boolean? = null): HomePageResponse {
+    @Suppress("DEPRECATION")
     return HomePageResponse(list, hasNext = hasNext ?: list.any { it.list.isNotEmpty() })
 }
 
@@ -503,7 +512,6 @@ abstract class MainAPI {
     open val mainPage = listOf(MainPageData("", "", false))
 
     // @WorkerThread
-    @Suppress("DEPRECATION")
     open suspend fun getMainPage(
         page: Int,
         request: MainPageRequest,
@@ -600,8 +608,8 @@ fun MainAPI.fixUrlNull(url: String?): String? {
 
 fun MainAPI.fixUrl(url: String): String {
     if (url.startsWith("http") ||
-        // Do not fix JSON objects when passed as urls.
-        url.startsWith("{\"")
+        // Do not fix JSON objects and arrays when passed as urls.
+        url.startsWith("{\"") || url.startsWith("[")
     ) {
         return url
     }
@@ -669,7 +677,7 @@ suspend fun getRhinoContext(): org.mozilla.javascript.Context {
     return Coroutines.mainWork {
         val rhino = org.mozilla.javascript.Context.enter()
         rhino.initSafeStandardObjects()
-        rhino.optimizationLevel = -1
+        rhino.setInterpretedMode(true)
         rhino
     }
 }
@@ -724,6 +732,7 @@ enum class DubStatus(val id: Int) {
     Subbed(0),
 }
 
+@Suppress("UNUSED_PARAMETER")
 enum class TvType(value: Int?) {
     Movie(1),
     AnimeMovie(2),
@@ -747,16 +756,15 @@ enum class TvType(value: Int?) {
     Podcast(17),
 }
 
-public enum class AutoDownloadMode(val value: Int) {
+enum class AutoDownloadMode(val value: Int) {
     Disable(0),
     FilterByLang(1),
     All(2),
-    NsfwOnly(3)
-    ;
+    NsfwOnly(3);
 
     companion object {
         infix fun getEnum(value: Int): AutoDownloadMode? =
-            AutoDownloadMode.values().firstOrNull { it.value == value }
+            entries.firstOrNull { it.value == value }
     }
 }
 
@@ -812,8 +820,9 @@ data class SubtitleFile(val lang: String, val url: String)
  * @property items List of [HomePageList] items.
  * @property hasNext if there is a next page or not.
  * */
+data class HomePageResponse
 @Deprecated("Use newHomePageResponse method", level = DeprecationLevel.WARNING)
-data class HomePageResponse(
+constructor(
     val items: List<HomePageList>,
     val hasNext: Boolean = false
 )
@@ -832,6 +841,7 @@ data class HomePageList(
 /** enum class holds search quality.
  *
  * [Movie release types](https://en.wikipedia.org/wiki/Pirated_movie_release_types)**/
+@Suppress("UNUSED_PARAMETER")
 enum class SearchQuality(value: Int?) {
     Cam(1),
     CamRip(2),
@@ -899,8 +909,42 @@ fun getQualityFromString(string: String?): SearchQuality? {
     }
 }
 
-/** Abstract interface of SearchResponse.
- * */
+
+/**
+ * For APIs using the mainUrl in the prefix for `MainAPI::load`,
+ * this function replaces the `scheme`, `host` and `port` from an old link to the new mainUrl.
+ *
+ * https://en.wikipedia.org/wiki/Uniform_Resource_Identifier
+ * ```text
+ *           userinfo       host      port
+ *           ┌──┴───┐ ┌──────┴──────┐ ┌┴─┐
+ *   https://john.doe@www.example.com:1234/forum/questions/?tag=networking&order=newest#:~:text=whatever
+ *   └─┬─┘   └─────────────┬─────────────┘└───────┬───────┘ └────────────┬────────────┘ └───────┬───────┘
+ *   scheme            authority                path                   query                 fragment
+ * ```
+ */
+fun MainAPI.updateUrl(url: String): String {
+    try {
+        val original = URI(url)
+        val updated = URI(mainUrl)
+
+        // URI(String scheme, String userInfo, String host, int port, String path, String query, String fragment)
+        return URI(
+            updated.scheme,
+            original.userInfo,
+            updated.host,
+            updated.port,
+            original.path,
+            original.query,
+            original.fragment
+        ).toString()
+    } catch (t: Throwable) {
+        logError(t)
+        return url
+    }
+}
+
+/** Abstract interface of SearchResponse. */
 interface SearchResponse {
     val name: String
     val url: String
@@ -912,7 +956,6 @@ interface SearchResponse {
     var quality: SearchQuality?
 }
 
-@Suppress("DEPRECATION")
 fun MainAPI.newTorrentSearchResponse(
     name: String,
     url: String,
@@ -920,6 +963,7 @@ fun MainAPI.newTorrentSearchResponse(
     fix: Boolean = true,
     initializer: TorrentSearchResponse.() -> Unit = { },
 ): TorrentSearchResponse {
+    @Suppress("DEPRECATION")
     val builder = TorrentSearchResponse(
         name = name,
         url = if (fix) fixUrl(url) else url,
@@ -932,7 +976,6 @@ fun MainAPI.newTorrentSearchResponse(
     return builder
 }
 
-@Suppress("DEPRECATION")
 fun MainAPI.newMovieSearchResponse(
     name: String,
     url: String,
@@ -940,13 +983,13 @@ fun MainAPI.newMovieSearchResponse(
     fix: Boolean = true,
     initializer: MovieSearchResponse.() -> Unit = { },
 ): MovieSearchResponse {
+    @Suppress("DEPRECATION")
     val builder = MovieSearchResponse(name, if (fix) fixUrl(url) else url, this.name, type)
     builder.initializer()
 
     return builder
 }
 
-@Suppress("DEPRECATION")
 fun MainAPI.newLiveSearchResponse(
     name: String,
     url: String,
@@ -954,6 +997,7 @@ fun MainAPI.newLiveSearchResponse(
     fix: Boolean = true,
     initializer: LiveSearchResponse.() -> Unit = { },
 ): LiveSearchResponse {
+    @Suppress("DEPRECATION")
     val builder = LiveSearchResponse(
         name = name,
         url = if (fix) fixUrl(url) else url,
@@ -964,7 +1008,6 @@ fun MainAPI.newLiveSearchResponse(
     return builder
 }
 
-@Suppress("DEPRECATION")
 fun MainAPI.newTvSeriesSearchResponse(
     name: String,
     url: String,
@@ -972,13 +1015,13 @@ fun MainAPI.newTvSeriesSearchResponse(
     fix: Boolean = true,
     initializer: TvSeriesSearchResponse.() -> Unit = { },
 ): TvSeriesSearchResponse {
+    @Suppress("DEPRECATION")
     val builder = TvSeriesSearchResponse(name, if (fix) fixUrl(url) else url, this.name, type)
     builder.initializer()
 
     return builder
 }
 
-@Suppress("DEPRECATION")
 fun MainAPI.newAnimeSearchResponse(
     name: String,
     url: String,
@@ -986,6 +1029,7 @@ fun MainAPI.newAnimeSearchResponse(
     fix: Boolean = true,
     initializer: AnimeSearchResponse.() -> Unit = { },
 ): AnimeSearchResponse {
+    @Suppress("DEPRECATION")
     val builder = AnimeSearchResponse(name, if (fix) fixUrl(url) else url, this.name, type)
     builder.initializer()
 
@@ -1049,8 +1093,9 @@ data class ActorData(
 /** Data class of [SearchResponse] interface for Anime.
  * @see newAnimeSearchResponse
  * */
+data class AnimeSearchResponse
 @Deprecated("Use newAnimeSearchResponse", level = DeprecationLevel.WARNING)
-data class AnimeSearchResponse(
+constructor(
     override val name: String,
     override val url: String,
     override val apiName: String,
@@ -1068,7 +1113,6 @@ data class AnimeSearchResponse(
     override var posterHeaders: Map<String, String>? = null,
 ) : SearchResponse
 
-@Suppress("DEPRECATION")
 fun AnimeSearchResponse.addDubStatus(status: DubStatus, episodes: Int? = null) {
     this.dubStatus = dubStatus?.also { it.add(status) } ?: EnumSet.of(status)
     if (this.type?.isMovieType() != true)
@@ -1076,24 +1120,20 @@ fun AnimeSearchResponse.addDubStatus(status: DubStatus, episodes: Int? = null) {
             this.episodes[status] = episodes
 }
 
-@Suppress("DEPRECATION")
 fun AnimeSearchResponse.addDubStatus(isDub: Boolean, episodes: Int? = null) {
     addDubStatus(if (isDub) DubStatus.Dubbed else DubStatus.Subbed, episodes)
 }
 
-@Suppress("DEPRECATION")
 fun AnimeSearchResponse.addDub(episodes: Int?) {
     if (episodes == null || episodes <= 0) return
     addDubStatus(DubStatus.Dubbed, episodes)
 }
 
-@Suppress("DEPRECATION")
 fun AnimeSearchResponse.addSub(episodes: Int?) {
     if (episodes == null || episodes <= 0) return
     addDubStatus(DubStatus.Subbed, episodes)
 }
 
-@Suppress("DEPRECATION")
 fun AnimeSearchResponse.addDubStatus(
     dubExist: Boolean,
     subExist: Boolean,
@@ -1107,7 +1147,6 @@ fun AnimeSearchResponse.addDubStatus(
         addDubStatus(DubStatus.Subbed, subEpisodes)
 }
 
-@Suppress("DEPRECATION")
 fun AnimeSearchResponse.addDubStatus(status: String, episodes: Int? = null) {
     if (status.contains("(dub)", ignoreCase = true)) {
         addDubStatus(DubStatus.Dubbed, episodes)
@@ -1119,8 +1158,9 @@ fun AnimeSearchResponse.addDubStatus(status: String, episodes: Int? = null) {
 /** Data class of [SearchResponse] interface for Torrent.
  * @see newTorrentSearchResponse
  * */
+data class TorrentSearchResponse
 @Deprecated("Use newTorrentSearchResponse", level = DeprecationLevel.WARNING)
-data class TorrentSearchResponse(
+constructor(
     override val name: String,
     override val url: String,
     override val apiName: String,
@@ -1135,8 +1175,9 @@ data class TorrentSearchResponse(
 /** Data class of [SearchResponse] interface for Movies.
  * @see newMovieSearchResponse
  * */
+data class MovieSearchResponse
 @Deprecated("Use newMovieSearchResponse", level = DeprecationLevel.WARNING)
-data class MovieSearchResponse(
+constructor(
     override val name: String,
     override val url: String,
     override val apiName: String,
@@ -1146,14 +1187,15 @@ data class MovieSearchResponse(
     var year: Int? = null,
     override var id: Int? = null,
     override var quality: SearchQuality? = null,
-    override var posterHeaders: Map<String, String>? = null,
+    override var posterHeaders: Map<String, String>? = null
 ) : SearchResponse
 
 /** Data class of [SearchResponse] interface for Live streams.
  * @see newLiveSearchResponse
  * */
+data class LiveSearchResponse
 @Deprecated("Use newLiveSearchResponse", level = DeprecationLevel.WARNING)
-data class LiveSearchResponse(
+constructor(
     override val name: String,
     override val url: String,
     override val apiName: String,
@@ -1163,22 +1205,23 @@ data class LiveSearchResponse(
     override var id: Int? = null,
     override var quality: SearchQuality? = null,
     override var posterHeaders: Map<String, String>? = null,
-    val lang: String? = null,
+    var lang: String? = null,
 ) : SearchResponse
 
 /** Data class of [SearchResponse] interface for Tv series.
  * @see newTvSeriesSearchResponse
  * */
+data class TvSeriesSearchResponse
 @Deprecated("Use newTvSeriesSearchResponse", level = DeprecationLevel.WARNING)
-data class TvSeriesSearchResponse(
+constructor(
     override val name: String,
     override val url: String,
     override val apiName: String,
     override var type: TvType? = null,
 
     override var posterUrl: String? = null,
-    val year: Int? = null,
-    val episodes: Int? = null,
+    var year: Int? = null,
+    var episodes: Int? = null,
     override var id: Int? = null,
     override var quality: SearchQuality? = null,
     override var posterHeaders: Map<String, String>? = null,
@@ -1193,29 +1236,30 @@ data class TrailerData(
     val extractorUrl: String,
     val referer: String?,
     val raw: Boolean,
+    val headers: Map<String, String> = mapOf(),
     // var mirrors: List<ExtractorLink>,
     // var subtitles: List<SubtitleFile> = emptyList(),
 )
 
 /** Abstract interface of LoadResponse responses
- * @param name Title of the media, appears on result page.
- * @param url Url of the media.
- * @param apiName Plugin name, appears on result page.
- * @param type [TvType] of the media .
- * @param posterUrl Url of the media poster, appears on Top of result page.
- * @param year Year of the media, appears on result page.
- * @param plot Plot of the media, appears on result page.
- * @param rating Rating of the media, appears on result page (0-10000).
- * @param tags Tags of the media, appears on result page.
- * @param duration duration of the media, appears on result page.
- * @param trailers list of the media [TrailerData], used to load trailers.
- * @param recommendations list of the [SearchResponse] related to media, appears on result page.
- * @param actors list of the [ActorData] casted in the media, appears on result page.
- * @param comingSoon determines if the media is released or coming soon.
- * @param syncData Online sync services compatible with the media.
- * @param posterHeaders headers map used by network request to get the poster.
- * @param backgroundPosterUrl Url of the media background poster.
- * @param contentRating content rating of the media, appears on result page.
+ * @property name Title of the media, appears on result page.
+ * @property url Url of the media.
+ * @property apiName Plugin name, appears on result page.
+ * @property type [TvType] of the media .
+ * @property posterUrl Url of the media poster, appears on Top of result page.
+ * @property year Year of the media, appears on result page.
+ * @property plot Plot of the media, appears on result page.
+ * @property rating Rating of the media, appears on result page (0-10000).
+ * @property tags Tags of the media, appears on result page.
+ * @property duration duration of the media, appears on result page.
+ * @property trailers list of the media [TrailerData], used to load trailers.
+ * @property recommendations list of the [SearchResponse] related to media, appears on result page.
+ * @property actors list of the [ActorData] casted in the media, appears on result page.
+ * @property comingSoon determines if the media is released or coming soon.
+ * @property syncData Online sync services compatible with the media.
+ * @property posterHeaders headers map used by network request to get the poster.
+ * @property backgroundPosterUrl Url of the media background poster.
+ * @property contentRating content rating of the media, appears on result page.
  * */
 interface LoadResponse {
     var name: String
@@ -1258,7 +1302,6 @@ interface LoadResponse {
             return tryParseJson(idString) ?: return emptyMap()
         }
 
-        @Suppress("DEPRECATION")
         fun LoadResponse.isMovie(): Boolean {
             return this.type.isMovieType() || this is MovieLoadResponse
         }
@@ -1336,6 +1379,7 @@ interface LoadResponse {
         }
 
         /**better to call addTrailer with multiple trailers directly instead of calling this multiple times*/
+        @Suppress("RedundantSuspendModifier")
         suspend fun LoadResponse.addTrailer(
             trailerUrl: String?,
             referer: String? = null,
@@ -1375,6 +1419,18 @@ interface LoadResponse {
             trailers.addAll(newTrailers.map { TrailerData(listOf(it)) })
         }*/
 
+        @Suppress("RedundantSuspendModifier")
+        suspend fun LoadResponse.addTrailer(
+            trailerUrl: String?,
+            referer: String? = null,
+            addRaw: Boolean = false,
+            headers: Map<String, String> = mapOf()
+        ) {
+            if (!isTrailersEnabled || trailerUrl.isNullOrBlank()) return
+            this.trailers.add(TrailerData(trailerUrl, referer, addRaw, headers))
+        }
+
+        @Suppress("RedundantSuspendModifier")
         suspend fun LoadResponse.addTrailer(
             trailerUrls: List<String>?,
             referer: String? = null,
@@ -1413,10 +1469,12 @@ interface LoadResponse {
             this.addSimklId(SimklSyncServices.Imdb, id)
         }
 
+        @Suppress("UNUSED_PARAMETER")
         fun LoadResponse.addTrackId(id: String?) {
             // TODO add trackt sync
         }
 
+        @Suppress("UNUSED_PARAMETER")
         fun LoadResponse.addkitsuId(id: String?) {
             // TODO add kitsu sync
         }
@@ -1449,10 +1507,10 @@ fun getDurationFromString(input: String?): Int? {
     Regex("(\\d+\\shr)|(\\d+\\shour)|(\\d+\\smin)|(\\d+\\ssec)").findAll(input).let { values ->
         var seconds = 0
         values.forEach {
-            val time_text = it.value
-            if (time_text.isNotBlank()) {
-                val time = time_text.filter { s -> s.isDigit() }.trim().toInt()
-                val scale = time_text.filter { s -> !s.isDigit() }.trim()
+            val timeText = it.value
+            if (timeText.isNotBlank()) {
+                val time = timeText.filter { s -> s.isDigit() }.trim().toInt()
+                val scale = timeText.filter { s -> !s.isDigit() }.trim()
                 //println("Scale: $scale")
                 val timeval = when (scale) {
                     "hr", "hour" -> time * 60 * 60
@@ -1478,9 +1536,9 @@ fun getDurationFromString(input: String?): Int? {
     }
     Regex("([0-9]*)m").find(cleanInput)?.groupValues?.let { values ->
         if (values.size == 2) {
-            val return_value = values[1].toIntOrNull()
-            if (return_value != null) {
-                return return_value
+            val returnValue = values[1].toIntOrNull()
+            if (returnValue != null) {
+                return returnValue
             }
         }
     }
@@ -1625,8 +1683,9 @@ fun EpisodeResponse.addSeasonNames(names: List<SeasonData>) {
 /** Data class of [LoadResponse] interface for Torrent.
  * @see newTorrentLoadResponse
  */
+data class TorrentLoadResponse
 @Deprecated("Use newTorrentLoadResponse method", level = DeprecationLevel.WARNING)
-data class TorrentLoadResponse(
+constructor(
     override var name: String,
     override var url: String,
     override var apiName: String,
@@ -1652,6 +1711,11 @@ data class TorrentLoadResponse(
      * Secondary constructor for backwards compatibility without contentRating.
      * Remove this constructor after there is a new stable release and extensions are updated to support contentRating.
      */
+    @Suppress("DEPRECATION")
+    @Deprecated(
+        "Use newTorrentLoadResponse method with contentRating included",
+        level = DeprecationLevel.WARNING
+    )
     constructor(
         name: String,
         url: String,
@@ -1696,7 +1760,6 @@ data class TorrentLoadResponse(
     )
 }
 
-@Suppress("DEPRECATION")
 suspend fun MainAPI.newTorrentLoadResponse(
     name: String,
     url: String,
@@ -1704,6 +1767,7 @@ suspend fun MainAPI.newTorrentLoadResponse(
     torrent: String? = null,
     initializer: suspend TorrentLoadResponse.() -> Unit = { }
 ): TorrentLoadResponse {
+    @Suppress("DEPRECATION")
     val builder = TorrentLoadResponse(
         name = name,
         url = url,
@@ -1721,9 +1785,9 @@ suspend fun MainAPI.newTorrentLoadResponse(
 /** Data class of [LoadResponse] interface for Anime.
  * @see newAnimeLoadResponse
  * */
-@Suppress("DEPRECATION")
+data class AnimeLoadResponse
 @Deprecated("Use newAnimeLoadResponse method", level = DeprecationLevel.WARNING)
-data class AnimeLoadResponse(
+constructor(
     var engName: String? = null,
     var japName: String? = null,
     override var name: String,
@@ -1783,6 +1847,11 @@ data class AnimeLoadResponse(
      * Secondary constructor for backwards compatibility without contentRating.
      * Remove this constructor after there is a new stable release and extensions are updated to support contentRating.
      */
+    @Suppress("DEPRECATION")
+    @Deprecated(
+        "Use newAnimeLoadResponse method with contentRating included",
+        level = DeprecationLevel.WARNING
+    )
     constructor(
         engName: String? = null,
         japName: String? = null,
@@ -1840,13 +1909,11 @@ data class AnimeLoadResponse(
 /**
  * If episodes already exist appends the list.
  * */
-@Suppress("DEPRECATION")
 fun AnimeLoadResponse.addEpisodes(status: DubStatus, episodes: List<Episode>?) {
     if (episodes.isNullOrEmpty()) return
     this.episodes[status] = (this.episodes[status] ?: emptyList()) + episodes
 }
 
-@Suppress("DEPRECATION")
 suspend fun MainAPI.newAnimeLoadResponse(
     name: String,
     url: String,
@@ -1854,6 +1921,7 @@ suspend fun MainAPI.newAnimeLoadResponse(
     comingSoonIfNone: Boolean = true,
     initializer: suspend AnimeLoadResponse.() -> Unit = { },
 ): AnimeLoadResponse {
+    @Suppress("DEPRECATION")
     val builder = AnimeLoadResponse(name = name, url = url, apiName = this.name, type = type)
     builder.initializer()
     if (comingSoonIfNone) {
@@ -1870,8 +1938,9 @@ suspend fun MainAPI.newAnimeLoadResponse(
 /** Data class of [LoadResponse] interface for Live streams.
  * @see newLiveStreamLoadResponse
  * */
+data class LiveStreamLoadResponse
 @Deprecated("Use newLiveStreamLoadResponse method", level = DeprecationLevel.WARNING)
-data class LiveStreamLoadResponse(
+constructor(
     override var name: String,
     override var url: String,
     override var apiName: String,
@@ -1898,6 +1967,11 @@ data class LiveStreamLoadResponse(
      * Secondary constructor for backwards compatibility without contentRating.
      * Remove this constructor after there is a new stable release and extensions are updated to support contentRating.
      */
+    @Suppress("DEPRECATION")
+    @Deprecated(
+        "Use newLiveStreamLoadResponse method with contentRating included",
+        level = DeprecationLevel.WARNING
+    )
     constructor(
         name: String,
         url: String,
@@ -1923,13 +1997,13 @@ data class LiveStreamLoadResponse(
     )
 }
 
-@Suppress("DEPRECATION")
 suspend fun MainAPI.newLiveStreamLoadResponse(
     name: String,
     url: String,
     dataUrl: String,
     initializer: suspend LiveStreamLoadResponse.() -> Unit = { }
 ): LiveStreamLoadResponse {
+    @Suppress("DEPRECATION")
     val builder = LiveStreamLoadResponse(
         name = name,
         url = url,
@@ -1944,8 +2018,9 @@ suspend fun MainAPI.newLiveStreamLoadResponse(
 /** Data class of [LoadResponse] interface for Movies.
  * @see newMovieLoadResponse
  * */
+data class MovieLoadResponse
 @Deprecated("Use newMovieLoadResponse method", level = DeprecationLevel.WARNING)
-data class MovieLoadResponse(
+constructor(
     override var name: String,
     override var url: String,
     override var apiName: String,
@@ -1972,6 +2047,11 @@ data class MovieLoadResponse(
      * Secondary constructor for backwards compatibility without contentRating.
      * Remove this constructor after there is a new stable release and extensions are updated to support contentRating.
      */
+    @Suppress("DEPRECATION")
+    @Deprecated(
+        "Use newMovieLoadResponse method with contentRating included",
+        level = DeprecationLevel.WARNING
+    )
     constructor(
         name: String,
         url: String,
@@ -1997,7 +2077,6 @@ data class MovieLoadResponse(
     )
 }
 
-@Suppress("DEPRECATION")
 suspend fun <T> MainAPI.newMovieLoadResponse(
     name: String,
     url: String,
@@ -2014,6 +2093,8 @@ suspend fun <T> MainAPI.newMovieLoadResponse(
         initializer = initializer
     )
     val dataUrl = data?.toJson() ?: ""
+
+    @Suppress("DEPRECATION")
     val builder = MovieLoadResponse(
         name = name,
         url = url,
@@ -2026,7 +2107,6 @@ suspend fun <T> MainAPI.newMovieLoadResponse(
     return builder
 }
 
-@Suppress("DEPRECATION")
 suspend fun MainAPI.newMovieLoadResponse(
     name: String,
     url: String,
@@ -2034,6 +2114,7 @@ suspend fun MainAPI.newMovieLoadResponse(
     dataUrl: String,
     initializer: suspend MovieLoadResponse.() -> Unit = { }
 ): MovieLoadResponse {
+    @Suppress("DEPRECATION")
     val builder = MovieLoadResponse(
         name = name,
         url = url,
@@ -2057,8 +2138,9 @@ suspend fun MainAPI.newMovieLoadResponse(
  * @property runTime Episode runtime in seconds.
  * @see newEpisode
  * */
+data class Episode
 @Deprecated("Use newEpisode", level = DeprecationLevel.WARNING)
-data class Episode(
+constructor(
     var data: String,
     var name: String? = null,
     var season: Int? = null,
@@ -2073,6 +2155,8 @@ data class Episode(
      * Secondary constructor for backwards compatibility without runTime.
      *  TODO Remove this constructor after there is a new stable release and extensions are updated to support runTime.
      */
+    @Suppress("DEPRECATION")
+    @Deprecated("Use newEpisode with runTime included", level = DeprecationLevel.WARNING)
     constructor(
         data: String,
         name: String? = null,
@@ -2087,26 +2171,24 @@ data class Episode(
     )
 }
 
-@Suppress("DEPRECATION")
 fun Episode.addDate(date: String?, format: String = "yyyy-MM-dd") {
     try {
-        this.date = SimpleDateFormat(format)?.parse(date ?: return)?.time
+        this.date = SimpleDateFormat(format).parse(date ?: return)?.time
     } catch (e: Exception) {
         logError(e)
     }
 }
 
-@Suppress("DEPRECATION")
 fun Episode.addDate(date: Date?) {
     this.date = date?.time
 }
 
-@Suppress("DEPRECATION")
 fun MainAPI.newEpisode(
     url: String,
     initializer: Episode.() -> Unit = { },
     fix: Boolean = true,
 ): Episode {
+    @Suppress("DEPRECATION")
     val builder = Episode(
         data = if (fix) fixUrl(url) else url
     )
@@ -2114,7 +2196,6 @@ fun MainAPI.newEpisode(
     return builder
 }
 
-@Suppress("DEPRECATION")
 fun <T> MainAPI.newEpisode(
     data: T,
     initializer: Episode.() -> Unit = { }
@@ -2124,6 +2205,7 @@ fun <T> MainAPI.newEpisode(
         initializer = initializer
     ) // just in case java is wack
 
+    @Suppress("DEPRECATION")
     val builder = Episode(
         data = data?.toJson() ?: throw ErrorLoadingException("invalid newEpisode")
     )
@@ -2156,9 +2238,9 @@ enum class SimklSyncServices(val originalName: String) {
 /** Data class of [LoadResponse] interface for Tv series.
  * @see newTvSeriesLoadResponse
  * */
-@Suppress("DEPRECATION")
+data class TvSeriesLoadResponse
 @Deprecated("Use newTvSeriesLoadResponse method", level = DeprecationLevel.WARNING)
-data class TvSeriesLoadResponse(
+constructor(
     override var name: String,
     override var url: String,
     override var apiName: String,
@@ -2210,6 +2292,11 @@ data class TvSeriesLoadResponse(
      * Secondary constructor for backwards compatibility without contentRating.
      * Remove this constructor after there is a new stable release and extensions are updated to support contentRating.
      */
+    @Suppress("DEPRECATION")
+    @Deprecated(
+        "Use newTvSeriesLoadResponse method with contentRating included",
+        level = DeprecationLevel.WARNING
+    )
     constructor(
         name: String,
         url: String,
@@ -2258,7 +2345,6 @@ data class TvSeriesLoadResponse(
     )
 }
 
-@Suppress("DEPRECATION")
 suspend fun MainAPI.newTvSeriesLoadResponse(
     name: String,
     url: String,
@@ -2266,6 +2352,7 @@ suspend fun MainAPI.newTvSeriesLoadResponse(
     episodes: List<Episode>,
     initializer: suspend TvSeriesLoadResponse.() -> Unit = { }
 ): TvSeriesLoadResponse {
+    @Suppress("DEPRECATION")
     val builder = TvSeriesLoadResponse(
         name = name,
         url = url,

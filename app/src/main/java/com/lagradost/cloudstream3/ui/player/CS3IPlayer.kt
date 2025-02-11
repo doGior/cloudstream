@@ -1,3 +1,5 @@
+@file:Suppress("DEPRECATION")
+
 package com.lagradost.cloudstream3.ui.player
 
 import android.annotation.SuppressLint
@@ -37,6 +39,7 @@ import androidx.media3.datasource.cache.LeastRecentlyUsedCacheEvictor
 import androidx.media3.datasource.cache.SimpleCache
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
+import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.Renderer.STATE_ENABLED
 import androidx.media3.exoplayer.Renderer.STATE_STARTED
@@ -44,9 +47,11 @@ import androidx.media3.exoplayer.SeekParameters
 import androidx.media3.exoplayer.dash.DashMediaSource
 import androidx.media3.exoplayer.drm.DefaultDrmSessionManager
 import androidx.media3.exoplayer.drm.FrameworkMediaDrm
+import androidx.media3.exoplayer.drm.HttpMediaDrmCallback
 import androidx.media3.exoplayer.drm.LocalMediaDrmCallback
 import androidx.media3.exoplayer.source.ClippingMediaSource
 import androidx.media3.exoplayer.source.ConcatenatingMediaSource
+import androidx.media3.exoplayer.source.ConcatenatingMediaSource2
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.source.MergingMediaSource
 import androidx.media3.exoplayer.source.SingleSampleMediaSource
@@ -67,6 +72,8 @@ import com.lagradost.cloudstream3.app
 import com.lagradost.cloudstream3.mvvm.debugAssert
 import com.lagradost.cloudstream3.mvvm.logError
 import com.lagradost.cloudstream3.mvvm.normalSafeApiCall
+import com.lagradost.cloudstream3.ui.settings.Globals.TV
+import com.lagradost.cloudstream3.ui.settings.Globals.isLayout
 import com.lagradost.cloudstream3.ui.subtitles.SaveCaptionStyle
 import com.lagradost.cloudstream3.utils.AppContextUtils.isUsingMobileData
 import com.lagradost.cloudstream3.utils.AppContextUtils.setDefaultFocus
@@ -76,11 +83,13 @@ import com.lagradost.cloudstream3.utils.DataStoreHelper.currentAccount
 import com.lagradost.cloudstream3.utils.DrmExtractorLink
 import com.lagradost.cloudstream3.utils.EpisodeSkip
 import com.lagradost.cloudstream3.utils.ExtractorLink
+import com.lagradost.cloudstream3.utils.CLEARKEY_UUID
+import com.lagradost.cloudstream3.utils.WIDEVINE_UUID
+import com.lagradost.cloudstream3.utils.PLAYREADY_UUID
 import com.lagradost.cloudstream3.utils.ExtractorLinkPlayList
 import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.SubtitleHelper.fromTwoLettersToLanguage
 import io.github.anilbeesetti.nextlib.media3ext.ffdecoder.NextRenderersFactory
-import androidx.media3.exoplayer.DefaultRenderersFactory
 import kotlinx.coroutines.delay
 import java.io.File
 import java.util.UUID
@@ -146,10 +155,11 @@ class CS3IPlayer : IPlayer {
     )
 
     data class DrmMetadata(
-        val kid: String,
-        val key: String,
+        val kid: String? = null,
+        val key: String? = null,
         val uuid: UUID,
-        val kty: String,
+        val kty: String? = null,
+        val licenseUrl: String? = null,
         val keyRequestParameters: HashMap<String, String>,
     )
 
@@ -173,7 +183,6 @@ class CS3IPlayer : IPlayer {
     }
 
     override fun releaseCallbacks() {
-        ioSafe { Torrent.clearAll() }
         eventHandler = null
     }
 
@@ -549,6 +558,16 @@ class CS3IPlayer : IPlayer {
 
         exoPlayer?.apply {
             playWhenReady = false
+
+            // This may look weird, however on some TV devices the audio does not stop playing
+            // so this may fix it?
+            try {
+                pause()
+            } catch (t: Throwable) {
+                // No documented exception, but just to be extra safe
+                logError(t)
+            }
+
             stop()
             release()
         }
@@ -620,16 +639,19 @@ class CS3IPlayer : IPlayer {
         private fun createOnlineSource(link: ExtractorLink): HttpDataSource.Factory {
             val provider = getApiFromNameNull(link.source)
             val interceptor = provider?.getVideoInterceptor(link)
+            val userAgent = link.headers.entries.find {
+                it.key.equals("User-Agent", ignoreCase = true)
+            }?.value
 
             val source = if (interceptor == null) {
                 DefaultHttpDataSource.Factory() //TODO USE app.baseClient
-                    .setUserAgent(USER_AGENT)
+                    .setUserAgent(userAgent ?: USER_AGENT)
                     .setAllowCrossProtocolRedirects(true)   //https://stackoverflow.com/questions/69040127/error-code-io-bad-http-status-exoplayer-android
             } else {
                 val client = app.baseClient.newBuilder()
                     .addInterceptor(interceptor)
                     .build()
-                OkHttpDataSource.Factory(client).setUserAgent(USER_AGENT)
+                OkHttpDataSource.Factory(client).setUserAgent(userAgent ?: USER_AGENT)
             }
 
             // Do no include empty referer, if the provider wants those they can use the header map.
@@ -723,11 +745,28 @@ class CS3IPlayer : IPlayer {
             val exoPlayerBuilder =
                 ExoPlayer.Builder(context)
                     .setRenderersFactory { eventHandler, videoRendererEventListener, audioRendererEventListener, textRendererOutput, metadataRendererOutput ->
+                        val settingsManager = PreferenceManager.getDefaultSharedPreferences(context)
+                        val current = settingsManager.getInt(context.getString(R.string.software_decoding_key), -1)
+                        val softwareDecoding = when(current) {
+                            0 -> true // yes
+                            1 -> false // no
+                            // -1 = automatic
+                            else -> {
+                                // we do not want tv to have software decoding, because of crashes
+                                !isLayout(TV)
+                            }
+                        }
 
-                        NextRenderersFactory(context).apply {
-                            setEnableDecoderFallback(true)
-                            setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
-                        }.createRenderers(
+                        val factory = if (softwareDecoding) {
+                            NextRenderersFactory(context).apply {
+                                setEnableDecoderFallback(true)
+                                setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
+                            }
+                        } else {
+                            DefaultRenderersFactory(context)
+                        }
+
+                        factory.createRenderers(
                             eventHandler,
                             videoRendererEventListener,
                             audioRendererEventListener,
@@ -744,6 +783,7 @@ class CS3IPlayer : IPlayer {
                                 ).apply {
                                     // Required to make the decoder work with old subtitles
                                     // Upgrade CustomSubtitleDecoderFactory when media3 supports it
+                                    @Suppress("DEPRECATION")
                                     experimentalSetLegacyDecodingEnabled(true)
                                 }.also { renderer ->
                                     this.currentTextRenderer = renderer
@@ -797,34 +837,86 @@ class CS3IPlayer : IPlayer {
                 val item = mediaItemSlices.first()
 
                 item.drm?.let { drm ->
-                    val drmCallback =
-                        LocalMediaDrmCallback("{\"keys\":[{\"kty\":\"${drm.kty}\",\"k\":\"${drm.key}\",\"kid\":\"${drm.kid}\"}],\"type\":\"temporary\"}".toByteArray())
-                    val manager = DefaultDrmSessionManager.Builder()
-                        .setPlayClearSamplesWithoutKeys(true)
-                        .setMultiSession(false)
-                        .setKeyRequestParameters(drm.keyRequestParameters)
-                        .setUuidAndExoMediaDrmProvider(drm.uuid, FrameworkMediaDrm.DEFAULT_PROVIDER)
-                        .build(drmCallback)
-                    val manifestDataSourceFactory = DefaultHttpDataSource.Factory()
+                    when (drm.uuid) {
+                        CLEARKEY_UUID -> {
+                            val client =
+                                OkHttpDataSource.Factory(app.baseClient).setUserAgent(USER_AGENT)
+                            val drmCallback =
+                                LocalMediaDrmCallback("{\"keys\":[{\"kty\":\"${drm.kty}\",\"k\":\"${drm.key}\",\"kid\":\"${drm.kid}\"}],\"type\":\"temporary\"}".toByteArray())
+                            val manager = DefaultDrmSessionManager.Builder()
+                                .setPlayClearSamplesWithoutKeys(true)
+                                .setMultiSession(false)
+                                .setKeyRequestParameters(drm.keyRequestParameters)
+                                .setUuidAndExoMediaDrmProvider(
+                                    drm.uuid,
+                                    FrameworkMediaDrm.DEFAULT_PROVIDER
+                                )
+                                .build(drmCallback)
 
-                    DashMediaSource.Factory(manifestDataSourceFactory)
-                        .setDrmSessionManagerProvider { manager }
-                        .createMediaSource(item.mediaItem)
+                            DashMediaSource.Factory(client)
+                                .setDrmSessionManagerProvider { manager }
+                                .createMediaSource(item.mediaItem)
+                        }
+
+                        WIDEVINE_UUID,
+                        PLAYREADY_UUID -> {
+                            val client =
+                                OkHttpDataSource.Factory(app.baseClient).setUserAgent(USER_AGENT)
+                            val drmCallback = HttpMediaDrmCallback(drm.licenseUrl, client)
+                            val manager = DefaultDrmSessionManager.Builder()
+                                .setPlayClearSamplesWithoutKeys(true)
+                                .setMultiSession(true)
+                                .setKeyRequestParameters(drm.keyRequestParameters)
+                                .setUuidAndExoMediaDrmProvider(
+                                    drm.uuid,
+                                    FrameworkMediaDrm.DEFAULT_PROVIDER
+                                )
+                                .build(drmCallback)
+
+                            DashMediaSource.Factory(client)
+                                .setDrmSessionManagerProvider { manager }
+                                .createMediaSource(item.mediaItem)
+                        }
+
+                        else -> {
+                            Log.e(
+                                TAG,
+                                "DRM Metadata class is not supported: ${drm::class.simpleName}"
+                            )
+                            null
+                        }
+                    }
                 } ?: run {
                     factory.createMediaSource(item.mediaItem)
                 }
             } else {
-                val source = ConcatenatingMediaSource()
-                mediaItemSlices.map { item ->
-                    source.addMediaSource(
-                        // The duration MUST be known for it to work properly, see https://github.com/google/ExoPlayer/issues/4727
-                        ClippingMediaSource(
-                            factory.createMediaSource(item.mediaItem),
-                            item.durationUs
+                try {
+                    val source = ConcatenatingMediaSource2.Builder()
+                    mediaItemSlices.map { item ->
+                        source.add(
+                            // The duration MUST be known for it to work properly, see https://github.com/google/ExoPlayer/issues/4727
+                            ClippingMediaSource(
+                                factory.createMediaSource(item.mediaItem),
+                                item.durationUs
+                            )
                         )
-                    )
+                    }
+                    source.build()
+                } catch (_: IllegalArgumentException) {
+                    @Suppress("DEPRECATION")
+                    val source =
+                        ConcatenatingMediaSource() // FIXME figure out why ConcatenatingMediaSource2 seems to fail with Torrents only
+                    mediaItemSlices.map { item ->
+                        source.addMediaSource(
+                            // The duration MUST be known for it to work properly, see https://github.com/google/ExoPlayer/issues/4727
+                            ClippingMediaSource(
+                                factory.createMediaSource(item.mediaItem),
+                                item.durationUs
+                            )
+                        )
+                    }
+                    source
                 }
-                source
             }
 
             //println("PLAYBACK POS $playbackPosition")
@@ -966,7 +1058,6 @@ class CS3IPlayer : IPlayer {
     // we want to push metadata when loading torrents, so we just set up a looper that loops until
     // the index changes, this way only 1 looper is active at a time, and modifying eventLooperIndex
     // will kill any active loopers
-    @Volatile
     private var eventLooperIndex = 0
     private fun torrentEventLooper(hash: String) = ioSafe {
         eventLooperIndex += 2
@@ -1001,7 +1092,7 @@ class CS3IPlayer : IPlayer {
         Log.i(TAG, "loadExo")
         val settingsManager = PreferenceManager.getDefaultSharedPreferences(context)
         val maxVideoHeight = settingsManager.getInt(
-            context.getString(if (context.isUsingMobileData()) com.lagradost.cloudstream3.R.string.quality_pref_mobile_data_key else com.lagradost.cloudstream3.R.string.quality_pref_key),
+            context.getString(if (context.isUsingMobileData()) R.string.quality_pref_mobile_data_key else R.string.quality_pref_key),
             Int.MAX_VALUE
         )
 
@@ -1177,7 +1268,7 @@ class CS3IPlayer : IPlayer {
                             // Only play next episode if autoplay is on (default)
                             if (PreferenceManager.getDefaultSharedPreferences(context)
                                     ?.getBoolean(
-                                        context.getString(com.lagradost.cloudstream3.R.string.autoplay_next_key),
+                                        context.getString(R.string.autoplay_next_key),
                                         true
                                     ) == true
                             ) {
@@ -1501,6 +1592,7 @@ class CS3IPlayer : IPlayer {
                                 key = link.key,
                                 uuid = link.uuid,
                                 kty = link.kty,
+                                licenseUrl = link.licenseUrl,
                                 keyRequestParameters = link.keyRequestParameters
                             )
                         )

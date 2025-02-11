@@ -1,7 +1,8 @@
 import com.android.build.gradle.internal.cxx.configure.gradleLocalProperties
+import org.jetbrains.dokka.gradle.engine.parameters.KotlinPlatform
+import org.jetbrains.dokka.gradle.engine.parameters.VisibilityModifier
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.tasks.KotlinJvmCompile
-import java.io.ByteArrayOutputStream
 
 plugins {
     id("com.android.application")
@@ -13,22 +14,24 @@ val javaTarget = JvmTarget.fromTarget(libs.versions.jvmTarget.get())
 val tmpFilePath = System.getProperty("user.home") + "/work/_temp/keystore/"
 val prereleaseStoreFile: File? = File(tmpFilePath).listFiles()?.first()
 
-fun String.execute(): String? {
-    val output = ByteArrayOutputStream()
+fun getGitCommitHash(): String {
+    return try {
+        val headFile = file("${project.rootDir}/.git/HEAD")
 
-    val process = ProcessBuilder()
-        .command(this.split(" "))
-        .redirectOutput(ProcessBuilder.Redirect.PIPE)
-        .start()
-
-    val exitValue = process.inputStream.use { input ->
-        input.copyTo(output)
-        process.waitFor()
+        // Read the commit hash from .git/HEAD
+        if (headFile.exists()) {
+            val headContent = headFile.readText().trim()
+            if (headContent.startsWith("ref:")) {
+                val refPath = headContent.substring(5) // e.g., refs/heads/main
+                val commitFile = file("${project.rootDir}/.git/$refPath")
+                if (commitFile.exists()) commitFile.readText().trim() else ""
+            } else headContent // If it's a detached HEAD (commit hash directly)
+        } else {
+            "" // If .git/HEAD doesn't exist
+        }.take(7) // Return the short commit hash
+    } catch (_: Throwable) {
+        "" // Just return an empty string if any exception occurs
     }
-
-    return if (exitValue == 0) {
-        output.toString().trim()
-    } else null
 }
 
 android {
@@ -58,11 +61,11 @@ android {
         applicationId = "com.lagradost.cloudstream3"
         minSdk = libs.versions.minSdk.get().toInt()
         targetSdk = libs.versions.targetSdk.get().toInt()
-        versionCode = 64
-        versionName = "4.4.2"
+        versionCode = 65
+        versionName = "4.5.1"
 
         resValue("string", "app_version", "${defaultConfig.versionName}${versionNameSuffix ?: ""}")
-        resValue("string", "commit_hash", "git rev-parse --short HEAD".execute() ?: "")
+        resValue("string", "commit_hash", getGitCommitHash())
         resValue("bool", "is_prerelease", "false")
 
         // Reads local.properties
@@ -199,11 +202,17 @@ dependencies {
 
     // Extensions & Other Libs
     implementation(libs.rhino) // Run JavaScript
+    implementation(libs.quickjs)
     implementation(libs.fuzzywuzzy) // Library/Ext Searching with Levenshtein Distance
     implementation(libs.safefile) // To Prevent the URI File Fu*kery
-    implementation(libs.conscrypt.android) // To Fix SSL Fu*kery on Android 9
     implementation(libs.tmdb.java) // TMDB API v3 Wrapper Made with RetroFit
     coreLibraryDesugaring(libs.desugar.jdk.libs.nio) // NIO Flavor Needed for NewPipeExtractor
+    implementation(libs.conscrypt.android) {
+        version {
+            strictly("2.5.2")
+        }
+        because("2.5.3 crashes everything for everyone.")
+    } // To Fix SSL Fu*kery on Android 9
     implementation(libs.jackson.module.kotlin) {
         version {
             strictly("2.13.1")
@@ -212,7 +221,7 @@ dependencies {
     } // JSON Parser
 
     // Torrent Support
-    implementation(libs.torrentserver.aniyomi)
+    implementation(libs.torrentserver)
 
     // Downloading & Networking
     implementation(libs.work.runtime)
@@ -264,5 +273,24 @@ tasks.withType<KotlinJvmCompile> {
     compilerOptions {
         jvmTarget.set(javaTarget)
         freeCompilerArgs.add("-Xjvm-default=all-compatibility")
+    }
+}
+
+dokka {
+    moduleName = "App"
+    dokkaSourceSets {
+        main {
+            analysisPlatform = KotlinPlatform.JVM
+            documentedVisibilities(
+                VisibilityModifier.Public,
+                VisibilityModifier.Protected
+            )
+
+            sourceLink {
+                localDirectory = file("..")
+                remoteUrl("https://github.com/recloudstream/cloudstream/tree/master")
+                remoteLineSuffix = "#L"
+            }
+        }
     }
 }
