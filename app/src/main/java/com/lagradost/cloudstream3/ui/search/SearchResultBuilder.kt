@@ -2,6 +2,7 @@ package com.lagradost.cloudstream3.ui.search
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.view.KeyEvent.KEYCODE_MENU
 import android.view.View
 import android.widget.ImageView
 import android.widget.ProgressBar
@@ -221,6 +222,13 @@ object SearchResultBuilder {
            // bg.touchscreenBlocksFocus = false
             itemView.isFocusableInTouchMode = true
             itemView.isFocusable = true
+            itemView.setOnKeyListener { view, _, keyEvent ->
+                if(keyEvent.keyCode == KEYCODE_MENU){
+                    longClick(view)
+                    return@setOnKeyListener true
+                }
+                return@setOnKeyListener false
+            }
         }
 
         /**/
