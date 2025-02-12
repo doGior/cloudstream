@@ -9,6 +9,7 @@ import androidx.core.view.updateLayoutParams
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
+import androidx.lifecycle.lifecycleScope
 import androidx.viewbinding.ViewBinding
 import com.lagradost.cloudstream3.R
 import com.lagradost.cloudstream3.SearchResponse
@@ -24,6 +25,8 @@ import com.lagradost.cloudstream3.ui.settings.Globals.isLayout
 import com.lagradost.cloudstream3.utils.UIHelper.isBottomLayout
 import com.lagradost.cloudstream3.utils.UIHelper.toPx
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 
 class HomeScrollViewHolderState(view: ViewBinding) : ViewHolderState<Boolean>(view) {
@@ -64,9 +67,11 @@ class HomeChildItemAdapter(
     private val _isRowFocused = MutableLiveData(false)
     private val isRowFocused: LiveData<Boolean> get() = _isRowFocused
 
+    private var debounceJob: Job? = null
+
     companion object {
-        private var previousId: Int? = null
-        private val recyclerViewFocusMap = mutableMapOf<Int, Boolean>()
+        // <Recycler Id, < Item name (as the Id is nullable for some reason), How many time the item has been rendered>>
+        private val recyclerViewFocusMap = mutableMapOf<Int, MutableMap<String, Int>?>()
     }
 
     override fun onCreateContent(parent: ViewGroup): ViewHolderState<Boolean> {
@@ -112,38 +117,49 @@ class HomeChildItemAdapter(
             }
 
             is HomeResultGridExpandedBinding -> {
-
+                binding.backgroundCard.apply {
+                    layoutParams =
+                        layoutParams.apply {
+                            width = if (isRowFocused.value == true) focusedWidth else normalWidth
+                            height = if (isRowFocused.value == true) focusedHeight else normalHeight
+                        }
+                }
                 isRowFocused.observe(fragment.viewLifecycleOwner) { gotFocus ->
                     if (gotFocus) {
-                        if (previousId == id) {
-                            binding.backgroundCard.updateLayoutParams {
-                                width = focusedWidth
-                                height = focusedHeight
-                            }
-                            return@observe
+                        println("Item: ${item.name} \t gotBig")
+                        if (recyclerViewFocusMap[id]?.none { it.value != 1 } == true) {
+                            animateCardSize(
+                                binding.backgroundCard,
+                                normalWidth,
+                                normalHeight,
+                                focusedWidth,
+                                focusedHeight
+                            )
                         }
-                        animateCardSize(
-                            binding.backgroundCard,
-                            normalWidth,
-                            normalHeight,
-                            focusedWidth,
-                            focusedHeight
-                        )
                     } else {
-                        if (previousId == id) {
-                            binding.backgroundCard.updateLayoutParams {
-                                width = normalWidth
-                                height = normalHeight
+                        // Delay to handle possible quick focus changes
+                        debounceJob = fragment.viewLifecycleOwner.lifecycleScope.launch {
+                            delay(50)
+                            // Check if still unfocused after delay
+                            if (isRowFocused.value == false) {
+                                println("Item: ${item.name} \t gotSmall \t Map: ${recyclerViewFocusMap[id]}")
+                                if (recyclerViewFocusMap[id] != null) {
+                                    animateCardSize(
+                                        binding.backgroundCard,
+                                        focusedWidth,
+                                        focusedHeight,
+                                        normalWidth,
+                                        normalHeight
+                                    )
+                                } else {
+                                    binding.backgroundCard.updateLayoutParams {
+                                        width = normalWidth
+                                        height = normalHeight
+                                    }
+                                }
+                                recyclerViewFocusMap[id] = null
                             }
-                            return@observe
                         }
-                        animateCardSize(
-                            binding.backgroundCard,
-                            focusedWidth,
-                            focusedHeight,
-                            normalWidth,
-                            normalHeight
-                        )
                     }
                 }
                 if (position == 0) { // to fix tv
@@ -170,15 +186,24 @@ class HomeChildItemAdapter(
         holder.itemView.tag = position
         if (binding is HomeResultGridExpandedBinding) {
             holder.itemView.setOnFocusChangeListener { _, gotFocus ->
-                if (gotFocus) {
-                    recyclerViewFocusMap[id] = true
-                } else {
-                    if (id != previousId) {
-                        previousId = id
-                        recyclerViewFocusMap[id] = false
-                    }
+                if (recyclerViewFocusMap[id] == null) {
+                    recyclerViewFocusMap[id] = mutableMapOf(item.name to 0)
                 }
-                _isRowFocused.value = recyclerViewFocusMap[id]
+
+                val counter = recyclerViewFocusMap[id]!![item.name] ?: 0
+                if (gotFocus) {
+                    recyclerViewFocusMap[id]?.set(item.name, counter + 1)
+                    debounceJob?.cancel() // Cancel pending unfocus animation
+                } else {
+                    recyclerViewFocusMap[id]?.set(item.name, 0)
+                }
+
+                val newFocus = recyclerViewFocusMap[id]?.any { it.value == 1 } ?: false
+                if (_isRowFocused.value != newFocus) {
+                    _isRowFocused.value = newFocus
+                }
+
+                println("Item: ${item.name} \tID: $id \t Map[id]: ${recyclerViewFocusMap[id]}")
             }
         }
     }
