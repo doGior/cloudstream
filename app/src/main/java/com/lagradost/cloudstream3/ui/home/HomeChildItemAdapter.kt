@@ -23,6 +23,7 @@ import com.lagradost.cloudstream3.ui.settings.Globals.TV
 import com.lagradost.cloudstream3.ui.settings.Globals.isLayout
 import com.lagradost.cloudstream3.utils.UIHelper.isBottomLayout
 import com.lagradost.cloudstream3.utils.UIHelper.toPx
+import kotlinx.coroutines.Job
 
 
 class HomeScrollViewHolderState(view: ViewBinding) : ViewHolderState<Boolean>(view) {
@@ -64,6 +65,7 @@ class HomeChildItemAdapter(
     private val isRowFocused: LiveData<Boolean> get() = _isRowFocused
 
     companion object {
+        private var previousId: Int? = null
         private val recyclerViewFocusMap = mutableMapOf<Int, Boolean>()
     }
 
@@ -83,60 +85,65 @@ class HomeChildItemAdapter(
         item: SearchResponse,
         position: Int
     ) {
-        when (val binding = holder.view) {
+        val binding = holder.view
+
+        val minSize = 114
+        val maxSize = 180
+        val (baseWidth, baseHeight) = if (isHorizontal) {
+            maxSize to minSize
+        } else {
+            minSize to maxSize
+        }
+        val normalWidth = baseWidth.toPx
+        val normalHeight = baseHeight.toPx
+        val focusedWidth = (baseWidth * 1.4).toInt().toPx
+        val focusedHeight = (baseHeight * 1.4).toInt().toPx
+
+
+        when (binding) {
             is HomeResultGridBinding -> {
                 binding.backgroundCard.apply {
-                    val min = 114.toPx
-                    val max = 180.toPx
                     layoutParams =
                         layoutParams.apply {
-                            width = if (!isHorizontal) min else max
-                            height = if (!isHorizontal) max else min
+                            width = normalWidth
+                            height = normalHeight
                         }
                 }
             }
 
             is HomeResultGridExpandedBinding -> {
-                val minSize = 114
-                val maxSize = 180
-                val (baseWidth, baseHeight) = if (isHorizontal) {
-                    maxSize to minSize
-                } else {
-                    minSize to maxSize
-                }
-                val normalWidth = baseWidth.toPx
-                val normalHeight = baseHeight.toPx
-                val focusedWidth = (baseWidth * 1.4).toInt().toPx
-                val focusedHeight = (baseHeight * 1.4).toInt().toPx
 
-                isRowFocused.observe(fragment.viewLifecycleOwner) {
-                    val isRecyclerViewFocused = recyclerViewFocusMap[id] ?: false
-
-                    if (isRecyclerViewFocused) {
-//                            animateCardSize(
-//                                binding.backgroundCard,
-//                                normalWidth,
-//                                normalHeight,
-//                                focusedWidth,
-//                                focusedHeight
-//                            )
-                        binding.backgroundCard.updateLayoutParams {
-                            width = focusedWidth
-                            height = focusedHeight
+                isRowFocused.observe(fragment.viewLifecycleOwner) { gotFocus ->
+                    if (gotFocus) {
+                        if (previousId == id) {
+                            binding.backgroundCard.updateLayoutParams {
+                                width = focusedWidth
+                                height = focusedHeight
+                            }
+                            return@observe
                         }
+                        animateCardSize(
+                            binding.backgroundCard,
+                            normalWidth,
+                            normalHeight,
+                            focusedWidth,
+                            focusedHeight
+                        )
                     } else {
-                        binding.backgroundCard.updateLayoutParams {
-                            width = normalWidth
-                            height = normalHeight
+                        if (previousId == id) {
+                            binding.backgroundCard.updateLayoutParams {
+                                width = normalWidth
+                                height = normalHeight
+                            }
+                            return@observe
                         }
-//                        animateCardSize(
-//                            binding.backgroundCard,
-//                            focusedWidth,
-//                            focusedHeight,
-//                            normalWidth,
-//                            normalHeight
-//                        )
-
+                        animateCardSize(
+                            binding.backgroundCard,
+                            focusedWidth,
+                            focusedHeight,
+                            normalWidth,
+                            normalHeight
+                        )
                     }
                 }
                 if (position == 0) { // to fix tv
@@ -161,13 +168,18 @@ class HomeChildItemAdapter(
         )
 
         holder.itemView.tag = position
-        holder.itemView.setOnFocusChangeListener { _, gotFocus ->
-            if (gotFocus) {
-                recyclerViewFocusMap[id] = true // Mark this RecyclerView as focused
-            } else {
-                recyclerViewFocusMap[id] = false // Update focus state
+        if (binding is HomeResultGridExpandedBinding) {
+            holder.itemView.setOnFocusChangeListener { _, gotFocus ->
+                if (gotFocus) {
+                    recyclerViewFocusMap[id] = true
+                } else {
+                    if (id != previousId) {
+                        previousId = id
+                        recyclerViewFocusMap[id] = false
+                    }
+                }
+                _isRowFocused.value = recyclerViewFocusMap[id]
             }
-            _isRowFocused.value = recyclerViewFocusMap[id]
         }
     }
 
