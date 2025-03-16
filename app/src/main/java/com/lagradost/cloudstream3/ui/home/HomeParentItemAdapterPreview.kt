@@ -62,7 +62,7 @@ class HomeParentItemAdapterPreview(
         viewModel.popup(it)
     }, expandCallback = {
         viewModel.expand(it)
-    }) {
+    }, isInHomePage = true) {
     override val headers = 1
     override fun onCreateHeader(parent: ViewGroup): ViewHolderState<Bundle> {
         val inflater = LayoutInflater.from(parent.context)

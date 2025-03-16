@@ -41,6 +41,7 @@ open class ParentItemAdapter(
     private val clickCallback: (SearchClickCallback) -> Unit,
     private val moreInfoClickCallback: (HomeViewModel.ExpandableHomepageList) -> Unit,
     private val expandCallback: ((String) -> Unit)? = null,
+    private val isInHomePage: Boolean = false,
 ) : BaseAdapter<HomeViewModel.ExpandableHomepageList, Bundle>(
     fragment,
     id,
@@ -100,10 +101,14 @@ open class ParentItemAdapter(
                 clickCallback = clickCallback,
                 nextFocusUp = homeChildRecyclerview.nextFocusUpId,
                 nextFocusDown = homeChildRecyclerview.nextFocusDownId,
-                focusCallback = { gotFocus ->
-                    isRowFocused.postValue(fragment.activity?.currentFocus in binding.homeChildRecyclerview.allViews)
+                focusCallback = if (isInHomePage) {
+                    { gotFocus ->
+                        isRowFocused.postValue(fragment.activity?.currentFocus in binding.homeChildRecyclerview.allViews)
+                    }
+                } else {
+                    null
                 },
-                isRowFocused = isRowFocused
+                isRowFocused = if (isInHomePage) isRowFocused else null
             ).apply {
                 isHorizontal = info.isHorizontalImages
                 hasNext = item.hasNext
