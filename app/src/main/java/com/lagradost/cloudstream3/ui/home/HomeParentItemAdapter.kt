@@ -6,7 +6,9 @@ import android.os.Parcelable
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import androidx.core.view.allViews
 import androidx.fragment.app.Fragment
+import androidx.lifecycle.MutableLiveData
 import androidx.recyclerview.widget.RecyclerView
 import androidx.viewbinding.ViewBinding
 import com.lagradost.cloudstream3.HomePageList
@@ -60,7 +62,7 @@ open class ParentItemAdapter(
 
         override fun restore(state: Bundle) {
             (binding as? HomepageParentBinding)?.homeChildRecyclerview?.layoutManager?.onRestoreInstanceState(
-                    state.getSafeParcelable<Parcelable>("value")
+                state.getSafeParcelable<Parcelable>("value")
             )
         }
     }
@@ -89,6 +91,8 @@ open class ParentItemAdapter(
         val binding = holder.view
         if (binding !is HomepageParentBinding) return
         val info = item.list
+
+        val isRowFocused = MutableLiveData(false)
         binding.apply {
             homeChildRecyclerview.adapter = HomeChildItemAdapter(
                 fragment = fragment,
@@ -96,6 +100,10 @@ open class ParentItemAdapter(
                 clickCallback = clickCallback,
                 nextFocusUp = homeChildRecyclerview.nextFocusUpId,
                 nextFocusDown = homeChildRecyclerview.nextFocusDownId,
+                focusCallback = { gotFocus ->
+                    isRowFocused.postValue(fragment.activity?.currentFocus in binding.homeChildRecyclerview.allViews)
+                },
+                isRowFocused = isRowFocused
             ).apply {
                 isHorizontal = info.isHorizontalImages
                 hasNext = item.hasNext
@@ -146,6 +154,7 @@ open class ParentItemAdapter(
                 }
             }
         }
+
     }
 
     override fun onCreateContent(parent: ViewGroup): ParentItemHolder {

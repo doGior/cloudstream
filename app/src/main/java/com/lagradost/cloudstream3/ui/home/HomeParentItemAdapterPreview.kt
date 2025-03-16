@@ -132,122 +132,123 @@ class HomeParentItemAdapterPreview(
             fragment,
             id = "resumeAdapter".hashCode(),
             nextFocusUp = itemView.nextFocusUpId,
-            nextFocusDown = itemView.nextFocusDownId
-        ) { callback ->
-            if (callback.action != SEARCH_ACTION_SHOW_METADATA) {
-                viewModel.click(callback)
-                return@HomeChildItemAdapter
-            }
-            callback.view.context?.getActivity()?.showOptionSelectStringRes(
-                callback.view,
-                callback.card.posterUrl,
-                listOf(
-                    R.string.action_open_watching,
-                    R.string.action_remove_watching
-                ),
-                listOf(
-                    R.string.action_open_play,
-                    R.string.action_open_watching,
-                    R.string.action_remove_watching
-                )
-            ) { (isTv, actionId) ->
-                when (actionId + if (isTv) 0 else 1) {
-                    // play
-                    0 -> {
-                        viewModel.click(
-                            SearchClickCallback(
-                                START_ACTION_RESUME_LATEST,
-                                callback.view,
-                                -1,
-                                callback.card
+            nextFocusDown = itemView.nextFocusDownId,
+            clickCallback = { callback ->
+                if (callback.action != SEARCH_ACTION_SHOW_METADATA) {
+                    viewModel.click(callback)
+                    return@HomeChildItemAdapter
+                }
+                callback.view.context?.getActivity()?.showOptionSelectStringRes(
+                    callback.view,
+                    callback.card.posterUrl,
+                    listOf(
+                        R.string.action_open_watching,
+                        R.string.action_remove_watching
+                    ),
+                    listOf(
+                        R.string.action_open_play,
+                        R.string.action_open_watching,
+                        R.string.action_remove_watching
+                    )
+                ) { (isTv, actionId) ->
+                    when (actionId + if (isTv) 0 else 1) {
+                        // play
+                        0 -> {
+                            viewModel.click(
+                                SearchClickCallback(
+                                    START_ACTION_RESUME_LATEST,
+                                    callback.view,
+                                    -1,
+                                    callback.card
+                                )
                             )
-                        )
-                    }
-                    //info
-                    1 -> {
-                        viewModel.click(
-                            SearchClickCallback(
-                                SEARCH_ACTION_LOAD,
-                                callback.view,
-                                -1,
-                                callback.card
+                        }
+                        //info
+                        1 -> {
+                            viewModel.click(
+                                SearchClickCallback(
+                                    SEARCH_ACTION_LOAD,
+                                    callback.view,
+                                    -1,
+                                    callback.card
+                                )
                             )
-                        )
-                    }
-                    // remove
-                    2 -> {
-                        val card = callback.card
-                        if (card is DataStoreHelper.ResumeWatchingResult) {
-                            DataStoreHelper.removeLastWatched(card.parentId)
-                            viewModel.reloadStored()
+                        }
+                        // remove
+                        2 -> {
+                            val card = callback.card
+                            if (card is DataStoreHelper.ResumeWatchingResult) {
+                                DataStoreHelper.removeLastWatched(card.parentId)
+                                viewModel.reloadStored()
+                            }
                         }
                     }
                 }
-            }
-        }
+            }, null
+        )
         private val bookmarkAdapter = HomeChildItemAdapter(
             fragment,
             id = "bookmarkAdapter".hashCode(),
             nextFocusUp = itemView.nextFocusUpId,
-            nextFocusDown = itemView.nextFocusDownId
-        ) { callback ->
-            if (callback.action != SEARCH_ACTION_SHOW_METADATA) {
-                viewModel.click(callback)
-                return@HomeChildItemAdapter
-            }
+            nextFocusDown = itemView.nextFocusDownId,
+            clickCallback = { callback ->
+                if (callback.action != SEARCH_ACTION_SHOW_METADATA) {
+                    viewModel.click(callback)
+                    return@HomeChildItemAdapter
+                }
 
-            (callback.view.context?.getActivity() as? MainActivity)?.loadPopup(
-                callback.card,
-                load = false
-            )
-            /*
-            callback.view.context?.getActivity()?.showOptionSelectStringRes(
-                callback.view,
-                callback.card.posterUrl,
-                listOf(
-                    R.string.action_open_watching,
-                    R.string.action_remove_from_bookmarks,
-                ),
-                listOf(
-                    R.string.action_open_play,
-                    R.string.action_open_watching,
-                    R.string.action_remove_from_bookmarks
+                (callback.view.context?.getActivity() as? MainActivity)?.loadPopup(
+                    callback.card,
+                    load = false
                 )
-            ) { (isTv, actionId) ->
-                when (actionId + if (isTv) 0 else 1) { // play
-                    0 -> {
-                        viewModel.click(
-                            SearchClickCallback(
-                                START_ACTION_RESUME_LATEST,
-                                callback.view,
-                                -1,
-                                callback.card
+                /*
+                callback.view.context?.getActivity()?.showOptionSelectStringRes(
+                    callback.view,
+                    callback.card.posterUrl,
+                    listOf(
+                        R.string.action_open_watching,
+                        R.string.action_remove_from_bookmarks,
+                    ),
+                    listOf(
+                        R.string.action_open_play,
+                        R.string.action_open_watching,
+                        R.string.action_remove_from_bookmarks
+                    )
+                ) { (isTv, actionId) ->
+                    when (actionId + if (isTv) 0 else 1) { // play
+                        0 -> {
+                            viewModel.click(
+                                SearchClickCallback(
+                                    START_ACTION_RESUME_LATEST,
+                                    callback.view,
+                                    -1,
+                                    callback.card
+                                )
                             )
-                        )
-                    }
+                        }
 
-                    1 -> { // info
-                        viewModel.click(
-                            SearchClickCallback(
-                                SEARCH_ACTION_LOAD,
-                                callback.view,
-                                -1,
-                                callback.card
+                        1 -> { // info
+                            viewModel.click(
+                                SearchClickCallback(
+                                    SEARCH_ACTION_LOAD,
+                                    callback.view,
+                                    -1,
+                                    callback.card
+                                )
                             )
-                        )
-                    }
+                        }
 
-                    2 -> { // remove
-                        DataStoreHelper.setResultWatchState(
-                            callback.card.id,
-                            WatchType.NONE.internalId
-                        )
-                        viewModel.reloadStored()
+                        2 -> { // remove
+                            DataStoreHelper.setResultWatchState(
+                                callback.card.id,
+                                WatchType.NONE.internalId
+                            )
+                            viewModel.reloadStored()
+                        }
                     }
                 }
-            }
-            */
-        }
+                */
+            })
 
         private val previewViewpager: ViewPager2 =
             itemView.findViewById(R.id.home_preview_viewpager)
@@ -481,7 +482,9 @@ class HomeParentItemAdapterPreview(
                     if (!hasFocus) return@setOnFocusChangeListener
                     if (previewViewpager.currentItem <= 0) {
                         //Focus the Home item as the default focus will be the header item
-                        (activity as? MainActivity)?.binding?.navRailView?.findViewById<NavigationBarItemView>(R.id.navigation_home)?.requestFocus()
+                        (activity as? MainActivity)?.binding?.navRailView?.findViewById<NavigationBarItemView>(
+                            R.id.navigation_home
+                        )?.requestFocus()
                     } else {
                         previewViewpager.setCurrentItem(previewViewpager.currentItem - 1, true)
                         binding.homePreviewPlayBtt.requestFocus()
